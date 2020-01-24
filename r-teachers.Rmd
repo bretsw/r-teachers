@@ -1,0 +1,462 @@
+---
+title: "For the Longest Time: Continuity and Change in One Teaching-Related Subreddit"
+author: "K. Bret Staudt Willet & Jeffrey P. Carpenter"
+date: "01/24/2020"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    float_toc: yes
+    toc: yes
+---
+
+# Get set up
+
+This section loads the data and packages and starts to process the data, but doesn't calculate any statistics or create any results.
+
+1. Load packages
+
+```{r, include=FALSE}
+library(knitr)
+library(kableExtra)
+library(tidyverse)  # for data manipulation
+library(anytime)
+library(lubridate)  # for working with dates
+library(igraph)  # for processing the social network
+library(ggraph)  # for visualizing the social network
+```
+
+2. Set up settings for sharing 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+usethis::use_git_ignore(c("*.csv", "*.rds", "*.log"))
+```
+
+3. Set timeframe
+
+```{r timeframe, include=FALSE}
+date_start <- as_datetime("2016-01-01 05:00:00 UTC") %>% 
+        ymd_hms() %>%
+        with_tz(tzone="US/Eastern")
+date_end <- as_datetime("2019-07-01 03:59:59 UTC") %>% 
+        ymd_hms() %>%
+        with_tz(tzone="US/Eastern")
+```
+
+4. Load subreddit posts
+
+```{r posts, include=FALSE}
+posts_teachers <- read.csv("data/r-teachers-posts.csv", 
+                            header=TRUE, 
+                            colClasses='character'
+                            ) %>%
+        as.data.frame() %>%
+        rename(post_id = id, 
+               post_author = author,
+               post_voting_score = score,
+               post_text = selftext
+               ) %>%
+        mutate(post_date_time = created_utc %>% 
+                       as.numeric() %>% 
+                       anytime(asUTC=TRUE) %>% 
+                       as_datetime %>%
+                       ymd_hms() %>%
+                       with_tz(tzone="US/Eastern"),
+               post_voting_score = post_voting_score %>% as.numeric(),
+               post_year = year(post_date_time),
+               post_semester = semester(post_date_time, with_year=TRUE),
+               post_word_count = str_count(title, "\\s+") + 
+                       str_count(post_text, "\\s+") + 2
+               ) %>%
+        distinct(post_id, .keep_all = TRUE) %>%
+        filter(post_date_time >= date_start,
+               post_date_time <= date_end,
+               post_id != "",
+               !is.na(post_id),
+               post_author != "",
+               post_author != "[deleted]",
+               post_text != "[deleted]",
+               post_text != "[removed]"
+               )
+```
+
+5. Load subreddit responses
+
+```{r responses, include=FALSE}
+responses_teachers <- read.csv("data/r-teachers-responses.csv", 
+                            header=TRUE, 
+                            colClasses='character'
+                            ) %>%
+        as.data.frame() %>% 
+        rename(response_id = id, 
+               response_author = author,
+               response_voting_score = score,
+               response_text = body) %>%
+        mutate(thread_id = str_remove(link_id, pattern="t[0-9]_"),
+               parent_id = str_remove(parent_id, pattern="t[0-9]_"),
+               response_date_time = created_utc %>% 
+                       as.numeric() %>% 
+                       anytime(asUTC=TRUE) %>% 
+                       as_datetime %>%
+                       ymd_hms() %>%
+                       with_tz(tzone="US/Eastern"),
+               post_id = thread_id,
+               response_voting_score = response_voting_score %>% as.numeric(),
+               response_year = year(response_date_time),
+               response_semester = semester(response_date_time, with_year=TRUE),
+               response_word_count = str_count(response_text, "\\s+") + 1
+               ) %>% 
+        distinct(response_id, .keep_all = TRUE) %>%
+        filter(response_date_time >= date_start,
+               response_date_time <= date_end,
+               response_id != "",
+               !is.na(response_id),
+               response_author != "",
+               response_author != "[deleted]",
+               response_text != "[deleted]",
+               response_text != "[removed]"
+               )
+```
+
+6. Load subreddit subscriber history
+
+```{r subscribers, include=FALSE}
+subreddit_subscribers <- read.csv("data/r-teachers-subscriber-history.csv", 
+                            header=TRUE, 
+                            colClasses='character'
+                            ) %>%
+        as.data.frame() %>%
+        mutate(semester_mid = as.numeric(Period.Midpoint),
+               semester = Semester) %>%
+        select(semester, semester_mid) %>%
+        filter(!is.na(semester_mid))
+```
+
+7. Create a merged dataframe of posts and responses for both subreddits.
+
+```{r merged, include=FALSE}
+merged_teachers <- posts_teachers %>% 
+        left_join(responses_teachers, by=c('post_id')) %>%
+        mutate(self_response = ifelse(is.na(response_author), 
+                                      FALSE,
+                                      ifelse(post_author==response_author, TRUE, FALSE)
+                                      )
+               ) %>%
+        group_by(post_id) %>%
+        mutate(n_responses = length(which(!is.na(response_id))),
+               n_self_responses = length(which(self_response)), 
+               p_self_responses = ifelse(n_responses==0, 
+                                         0, 
+                                         round(100 * n_self_responses / n_responses, 2)
+                                         )
+               ) %>%
+        ungroup()
+```
+
+# Analysis and Results
+
+## Figure 1. Contributions to r/Teachers and r/education each day from January 1, 2016 through June 30, 2019
+
+```{r, include=TRUE, echo=FALSE}
+n_months <- (date_end - date_start) %>% time_length(unit="months")
+
+n_posts_overall_teachers <- length(unique(merged_teachers$post_id))
+
+n_responses_overall_teachers <- merged_teachers %>%
+        filter(., !is.na(response_id)) %>%
+        pull(response_id) %>%
+        unique() %>%
+        length()
+n_contributions_overall_teachers <- n_posts_overall_teachers +
+        n_responses_overall_teachers
+n_posters_overall_teachers <- length(unique(merged_teachers$post_author))
+
+n_responders_overall_teachers <- merged_teachers %>%
+        filter(., !is.na(response_author)) %>%
+        pull(response_author) %>%
+        unique() %>%
+        length()
+n_contributors_overall_teachers <- merged_teachers %>%
+        c(pull(., post_author), pull(., response_author)) %>%
+        unique() %>%
+        length() -1  ## to account for the NA response_author
+
+paste0("From the r/Teachers subreddit, we collected ", n_contributions_overall_teachers,  " contributions from ", n_contributors_overall_teachers, " contributors"); paste0("dated between ", date(date_start), " and ", date(date_end), " (", round(n_months, 2), " months),"); paste0("a total of ", n_posts_overall_teachers, " posts and ", n_responses_overall_teachers, " responses to those posts.")
+```
+
+```{r contributions-over-time-comparison, include=TRUE, echo=FALSE}
+to_plot_posts_teachers <- posts_teachers$post_date_time %>% 
+        floor_date("day") %>% 
+        as_date() %>%
+        table() %>% 
+        as.data.frame() %>%
+        rename(day = ".",
+               n = Freq) %>%
+        mutate(day = as_date(day),
+               type = "post",
+               subreddit = "teachers") %>%
+        filter((day >= date_start) & (day <= date_end))
+to_plot_responses_teachers <- responses_teachers$response_date_time %>% 
+        floor_date("day") %>% 
+        as_date() %>%
+        table() %>% 
+        as.data.frame() %>%
+        rename(day = ".",
+               n = Freq) %>%
+        mutate(day = as_date(day),
+               type = "response",
+               subreddit = "teachers") %>%
+        filter((day >= date_start) & (day <= date_end))
+to_plot <- to_plot_posts_teachers %>% 
+        full_join(to_plot_responses_teachers, by = c("subreddit", "day", "type", "n")) %>%
+        mutate(subreddit = as.factor(subreddit),
+               type = as.factor(type)
+               )
+
+ggplot(data = to_plot, mapping = aes(x=day, y=n, shape=type)) +
+        geom_point(size=3, alpha=.8, color="#63ACBE") + 
+        scale_shape_manual(values = c(17, 3)) +
+        geom_smooth(method='lm', se=FALSE, size=2, color="black") +
+        scale_y_continuous(trans='log10') +
+        xlab(NULL) +
+        ylab("Number of Contributions") +
+        theme_bw() +
+        theme(panel.grid.major = element_line(color = "gray30"),
+              panel.grid.minor = element_line(color = "gray90"),
+              axis.title=element_text(size=28, family='serif'),
+              axis.text=element_text(size=24, family='serif'),
+              legend.position='bottom',
+              legend.box = 'vertical',
+              legend.box.background = element_rect(),
+              legend.title=element_text(size=28, family='serif'), 
+              legend.text=element_text(size=24, family='serif')
+              ) +
+        labs(shape='Type of Contribution:')
+```
+
+```{r, include=FALSE}
+#ggsave("output/contributions-over-time.png", width = 16, height = 9)
+```
+
+```{r regression-line, include=TRUE, echo=FALSE}
+## Print the slopes of the linear regressions:
+post_fit_teachers <- to_plot %>% 
+        filter(type=='post', subreddit=='teachers') %>% 
+        lm(n ~ day, data = .)
+post_slope_teachers <- post_fit_teachers$coefficients[[2]] %>% round(2)
+post_slope_pval_teachers <- summary(post_fit_teachers)$coef[2,4] %>% round(8)
+
+response_fit_teachers <- to_plot %>% 
+        filter(type=='response', subreddit=='teachers') %>% 
+        lm(n ~ day, data = .)
+response_slope_teachers <- response_fit_teachers$coefficients[[2]] %>% round(2)
+response_slope_pval_teachers <- summary(response_fit_teachers)$coef[2,4] %>% round(8)
+
+paste0("For the r/Teachers subreddit, the slope of the `post` linear regression is ", post_slope_teachers, " (p=", post_slope_pval_teachers, "),"); paste0("and the slope of the `response` linear regression is ", response_slope_teachers, " (p=", response_slope_pval_teachers, ").")
+```
+
+## Table 1. Contributions to r/Teachers
+
+```{r table1, include=TRUE, echo=FALSE}
+## have to subtract 1 to account for NA rows for n_responders and n_contributors
+table1_teachers <- merged_teachers %>%
+        group_by(post_semester) %>% 
+        summarize(n_posters_teachers = length(unique(post_author)),
+                  n_responders_teachers = length(unique(response_author)) - 1, 
+                  n_contributors_teachers = length(unique(c(post_author, 
+                                                            response_author))) - 1
+                  ) %>%
+        rename(semester=post_semester) %>%
+        mutate(period = ifelse(semester==2016.1, "2016-Jan-Jun",
+                                 ifelse(semester==2016.2, "2016-Jul-Dec",
+                                        ifelse(semester==2017.1, "2017-Jan-Jun",
+                                               ifelse(semester==2017.2, "2017-Jul-Dec",
+                                                      ifelse(semester==2018.1, "2018-Jan-Jun",
+                                                             ifelse(semester==2018.2, "2018-Jul-Dec", 
+                                                                    "2019-Jan-Jun"
+                                                                    )
+                                                             )
+                                                      )
+                                               )
+                                        )
+                                 )
+               ) %>%
+        mutate(subscribers = subreddit_subscribers$semester_mid[1:7],
+               prop_contributing = round(100 * n_contributors_teachers / subscribers, 2)
+               )
+n_multiple_posts <- merged_teachers %>% 
+        group_by(post_semester) %>% 
+        count(post_author) %>%
+        filter(n>1) %>% 
+        summarize(multiple_posts = length(n))
+n_multiple_responses <- merged_teachers %>% 
+        filter(., !is.na(response_author)) %>%
+        group_by(post_semester) %>% 
+        count(response_author) %>%
+        filter(n > 1) %>% 
+        summarize(multiple_responses = length(n))
+posts_per <- merged_teachers %>% 
+        group_by(post_semester) %>% 
+        count(post_author) %>% 
+        summarize(mean_posts = round(mean(n), 2),
+                  sd_posts = round(sd(n), 2),
+                  max_posts = max(n)
+                  )
+responses_per <- merged_teachers %>% 
+        filter(., !is.na(response_author)) %>%
+        group_by(post_semester) %>% 
+        count(response_author) %>% 
+        summarize(mean_responses = round(mean(n), 2),
+                  sd_responses = round(sd(n), 2),
+                  max_responses = max(n)
+                  )
+table1 <- table1_teachers %>% 
+        mutate(multiple_posts = round(100 * n_multiple_posts$multiple_posts 
+                                      / n_posters_teachers, 2),
+               multiple_responses = round(100 * n_multiple_responses$multiple_responses 
+                                          / n_responders_teachers, 2),
+               mean_posts = posts_per$mean_posts,
+               sd_posts = posts_per$sd_posts,
+               max_posts = posts_per$max_posts,
+               mean_responses = responses_per$mean_responses,
+               sd_responses = responses_per$sd_responses,
+               max_responses = responses_per$max_responses
+               ) %>%
+        select(period, subscribers, n_contributors_teachers, n_posters_teachers, n_responders_teachers, 
+               prop_contributing, multiple_posts, multiple_responses, 
+               mean_posts, sd_posts, max_posts, mean_responses, sd_responses, max_responses)
+table1_kable <- table1 %>% 
+        knitr::kable(align='c',
+                     col.names=c("Period", "Subscribers", "Contributors",
+                                 "Posters", "Responders", "Proportion Contributing", 
+                                 "Multiple Posts", "Multiple Responses",
+                                 "Posts/poster", "(SD)", "Max posts",
+                                 "Responses/responder", "(SD)", "Max responses"
+                                 )
+                     ) %>% 
+        kable_styling(c("striped", "bordered"))
+#save_kable(table1_kable, "output/table1.png")  # requires webshot::install_phantomjs()
+table1_kable
+```
+
+## Table 2. Content Interaction in r/Teachers
+
+```{r table2, include=TRUE, echo=FALSE}
+## have to subtract 1 to account for NA rows for n_threads and n_responses
+table2_teachers <- merged_teachers %>% 
+        group_by(post_semester) %>% 
+        summarize(n_posts_teachers = length(unique(post_id)),
+                  n_threads_teachers = length(unique(thread_id)) - 1,
+                  n_responses_teachers = length(unique(response_id)) - 1,
+                  n_nonzero_teachers = n_posts_teachers - length(which(is.na(response_text))),
+                  words_per_post = round(mean(post_word_count), 2),
+                  words_per_response = round(mean(response_word_count, na.rm=TRUE), 2),
+                  mean_post_voting = round(mean(post_voting_score), 2),
+                  mean_response_voting = round(mean(response_voting_score, na.rm=TRUE), 2)
+                  ) %>%
+        mutate(response_rate_teachers = round((100 * n_nonzero_teachers / n_posts_teachers), 2),
+               responses_per_thread_teachers = round((n_responses_teachers / n_threads_teachers), 2)
+               ) %>%
+        rename(semester=post_semester) %>% 
+        mutate(period = ifelse(semester==2016.1, "2016-Jan-Jun",
+                                 ifelse(semester==2016.2, "2016-Jul-Dec",
+                                        ifelse(semester==2017.1, "2017-Jan-Jun",
+                                               ifelse(semester==2017.2, "2017-Jul-Dec",
+                                                      ifelse(semester==2018.1, "2018-Jan-Jun",
+                                                             ifelse(semester==2018.2, "2018-Jul-Dec", 
+                                                                    "2019-Jan-Jun"
+                                                                    )
+                                                             )
+                                                      )
+                                               )
+                                        )
+                                 )
+               ) %>%
+        select(period, 
+               n_posts_teachers, n_threads_teachers, n_responses_teachers, 
+               response_rate_teachers, responses_per_thread_teachers,
+               words_per_post, words_per_response, 
+               mean_post_voting, mean_response_voting)
+table2_kable <- table2_teachers %>% 
+        knitr::kable(align='c',
+                     col.names=c("Period", "Posts", "Threads", "Responses",
+                                 "Response Rate", "Responses per Thread",
+                                 "Words per Post", "Words per Response",
+                                 "Post Votes", "Response Votes")
+                     ) %>% 
+        kable_styling(c("striped", "bordered"))
+#save_kable(table2_kable, "output/table2.png")  # requires webshot::install_phantomjs()
+table2_kable
+```
+
+## Table 3. Social Interaction in r/Teachers
+
+```{r table3, include=TRUE, echo=FALSE}
+## retrieve the name of the parent author, create edgelist, and then build the network graph
+network_graph_teachers <- merged_teachers %>%
+        filter(parent_id %in% c(posts_teachers$post_id, 
+                                         responses_teachers$thread_id, 
+                                         responses_teachers$response_id)) %>%
+        mutate(parent_author = ifelse(parent_id %in% merged_teachers$post_id,
+                                      post_author,
+                                      response_author
+                                      )
+               ) %>% 
+        group_split(post_semester) %>%
+        lapply(., function(x) {
+                as.data.frame(x) %>% 
+                        select(response_author, parent_author)%>%
+                        as.matrix() %>%
+                        graph_from_edgelist(directed=TRUE) %>% 
+                        set_vertex_attr(name='degree', value=degree(., mode='total', loops=FALSE))
+                }
+               )
+
+nodes_teachers <- sapply(network_graph_teachers, function(x) {length(V(x))})
+edges_teachers <- sapply(network_graph_teachers, gsize)
+transitivity_teachers <- sapply(network_graph_teachers, transitivity) %>% round(4)
+reciprocity_teachers <- sapply(network_graph_teachers, reciprocity) %>% round(4)
+
+degrees_teachers_list <- lapply(network_graph_teachers, function(x) {vertex_attr(x, name='degree')})
+names(degrees_teachers_list) <- c("2016-Jan-Jun", "2016-Jul-Dec",
+                                  "2017-Jan-Jun", "2017-Jul-Dec",
+                                  "2018-Jan-Jun", "2018-Jul-Dec", 
+                                  "2019-Jan-Jun")
+degrees_teachers_df  <- map_df(degrees_teachers_list, ~ as.data.frame(.x), .id='period') %>%
+        rename(degree_teachers = .x) %>%
+        group_by(period) %>%
+        summarize(degree_mean = round(mean(degree_teachers), 2),
+                  degree_sd = round(sd(degree_teachers), 2),
+                  degree_median = median(degree_teachers),
+                  degree_min = min(degree_teachers),
+                  degree_max = max(degree_teachers)
+                  )
+
+table3_teachers <- degrees_teachers_df %>% 
+        cbind(nodes_teachers) %>%
+        cbind(edges_teachers) %>%
+        cbind(transitivity_teachers) %>%
+        cbind(reciprocity_teachers) %>%
+        select(period, nodes_teachers, edges_teachers, 
+               transitivity_teachers, reciprocity_teachers,
+               degree_mean, degree_sd, degree_median, degree_min, degree_max
+               )
+
+table3_kable <- table3_teachers %>% 
+        knitr::kable(align='c',
+                     col.names=c("Period", "Nodes", "Edges",
+                                 "Transitivity", "Reciprocity", 
+                                 "Mean", "SD", "Median", "Min", "Max")
+                     ) %>% 
+        kable_styling(c("striped", "bordered")) %>%
+        add_header_above(c(" " = 5, "Node Degree" = 5))
+#save_kable(table3_kable, "output/table3.png")  # requires webshot::install_phantomjs()
+table3_kable
+```
+
+# Version/dependencies
+
+```{r, session-info}
+sessionInfo()
+```
