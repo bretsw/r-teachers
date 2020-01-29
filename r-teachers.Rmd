@@ -390,6 +390,28 @@ table2_kable <- table2_teachers %>%
 table2_kable
 ```
 
+```{r post-votes, include=FALSE}
+
+## the 2018 Jan-Jun mean post voting score is oddly low,
+## so this bit of code allows closer examination.
+merged_teachers %>% 
+        group_by(post_semester) %>% 
+        summarize(mean_post_voting = round(mean(post_voting_score), 2),
+                  sd_post_voting = round(sd(post_voting_score), 2),
+                  median_post_voting = round(median(post_voting_score), 2),
+                  min_post_voting = round(min(post_voting_score), 2),
+                  max_post_voting = round(max(post_voting_score), 2)
+                 )
+#merged_teachers %>% 
+#        group_by(post_semester) %>% 
+#        summarize(mean_response_voting = round(mean(response_voting_score, na.rm=TRUE), 2),
+#                  sd_response_voting = round(sd(response_voting_score, na.rm=TRUE), 2),
+#                  median_response_voting = round(median(response_voting_score, na.rm=TRUE), 2),
+#                  min_response_voting = round(min(response_voting_score, na.rm=TRUE), 2),
+#                  max_response_voting = round(max(response_voting_score, na.rm=TRUE), 2)
+#                 )
+```
+
 ## Table 3. Social Interaction in r/Teachers
 
 ```{r table3, include=TRUE, echo=FALSE}
