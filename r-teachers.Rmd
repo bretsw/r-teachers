@@ -217,8 +217,8 @@ to_plot <- to_plot_posts_teachers %>%
 ggplot(data = to_plot, mapping = aes(x=day, y=n, shape=type)) +
         geom_point(size=3, alpha=.8, color="#63ACBE") + 
         scale_shape_manual(values = c(17, 3)) +
-        geom_smooth(method='lm', se=FALSE, size=2, color="black") +
         scale_y_continuous(trans='log10') +
+        geom_smooth(method='lm', se=FALSE, size=2, color="black") +
         xlab(NULL) +
         ylab("Number of Contributions") +
         theme_bw() +
